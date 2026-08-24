@@ -1,0 +1,9 @@
+.git
+.wrangler
+.sites-runtime
+dist
+node_modules
+npm-debug.log*
+*.local
+.env
+.env.*

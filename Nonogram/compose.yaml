@@ -1,0 +1,12 @@
+services:
+  nonogram:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nonogram-viet
+    restart: unless-stopped
+    ports:
+      - "${NONOGRAM_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
