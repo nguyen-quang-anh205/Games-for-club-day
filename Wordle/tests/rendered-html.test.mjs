@@ -25,6 +25,9 @@ test("renders the Cyber Wordle mission entry screen", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await response.text();
   assert.match(html, /CYBER WORDLE/i);
-  assert.match(html, /CAMPUS RECON/i);
+  assert.match(html, /Decode three five-letter English words/i);
+  assert.match(html, /USTH PROTOCOL/i);
+  assert.match(html, /6<\/b> MAX GUESSES/i);
+  assert.match(html, /3<\/b> FLAG FRAGMENTS/i);
   assert.match(html, /BEGIN MISSION/i);
 });

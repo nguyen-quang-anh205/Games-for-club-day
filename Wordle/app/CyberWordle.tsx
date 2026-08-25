@@ -2,8 +2,14 @@
 
 import { FormEvent, useEffect, useState } from "react";
 
-import { createRound, dismissHint, purchaseHint, submitGuess } from "../lib/game-engine.mjs";
-import { composeGuess, remainingInputLength } from "../lib/guess-composer.mjs";
+import { createRound, submitGuess } from "../lib/game-engine.mjs";
+import { remainingInputLength } from "../lib/guess-composer.mjs";
+import {
+  buildBoardRows,
+  buildCampaignEntry,
+  composeFlag,
+  ROUND_CATEGORIES,
+} from "../lib/campaign.mjs";
 import { rankEntries, upsertScore } from "../lib/leaderboard.mjs";
 import { pickPuzzle, type Puzzle } from "./puzzles";
 
@@ -16,26 +22,31 @@ type RoundState = {
   attempt: number;
   rows: Row[];
   hints: Hint[];
-  availableHints: number;
   status: "playing" | "won" | "lost";
   message: string;
 };
 type Entry = {
   codename: string;
-  schoolScore: number;
-  clubScore: number;
+  roundScores: number[];
   totalScore: number;
   roundsCompleted: number;
   achievedAt: string;
 };
+type RoundIndex = 0 | 1 | 2;
 type Screen = "welcome" | "play" | "round-result" | "codename" | "failed" | "leaderboard";
 
-const STORAGE_KEY = "cyber-wordle-demo-leaderboard-v1";
+const STORAGE_KEY = "cyber-wordle-demo-leaderboard-v2";
 const SAMPLE_ENTRIES: Entry[] = [
-  { codename: "NullByte", schoolScore: 185, clubScore: 180, totalScore: 365, roundsCompleted: 2, achievedAt: "2026-08-24T08:00:00.000Z" },
-  { codename: "PacketFox", schoolScore: 175, clubScore: 175, totalScore: 350, roundsCompleted: 2, achievedAt: "2026-08-24T08:15:00.000Z" },
-  { codename: "BlueTeam", schoolScore: 190, clubScore: 0, totalScore: 190, roundsCompleted: 1, achievedAt: "2026-08-24T08:30:00.000Z" },
+  { codename: "NullByte", roundScores: [185, 180, 175], totalScore: 540, roundsCompleted: 3, achievedAt: "2026-08-24T08:00:00.000Z" },
+  { codename: "PacketFox", roundScores: [175, 175, 180], totalScore: 530, roundsCompleted: 3, achievedAt: "2026-08-24T08:15:00.000Z" },
+  { codename: "BlueTeam", roundScores: [190, 170, 165], totalScore: 525, roundsCompleted: 3, achievedAt: "2026-08-24T08:30:00.000Z" },
 ];
+
+const ROUND_META = [
+  { number: "01", title: "OPEN SIGNAL", label: "FREE THEME" },
+  { number: "02", title: "SECOND VECTOR", label: "FREE THEME" },
+  { number: "03", title: "USTH PROTOCOL", label: "UNIVERSITY THEME" },
+] as const;
 
 function loadLeaderboard(): Entry[] {
   if (typeof window === "undefined") return SAMPLE_ENTRIES;
@@ -49,63 +60,79 @@ function loadLeaderboard(): Entry[] {
 
 export default function CyberWordle() {
   const [screen, setScreen] = useState<Screen>("welcome");
-  const [roundIndex, setRoundIndex] = useState<0 | 1>(0);
-  const [round, setRound] = useState<RoundState>(() => createRound(pickPuzzle("school")));
+  const [roundIndex, setRoundIndex] = useState<RoundIndex>(0);
+  const [round, setRound] = useState<RoundState>(() => createRound(pickPuzzle("general-one")));
   const [guess, setGuess] = useState("");
-  const [schoolScore, setSchoolScore] = useState(0);
-  const [clubScore, setClubScore] = useState(0);
+  const [roundScores, setRoundScores] = useState<number[]>([]);
+  const [fragments, setFragments] = useState<string[]>([]);
+  const [allowedWords, setAllowedWords] = useState<Set<string> | null>(null);
   const [codename, setCodename] = useState("");
   const [codenameError, setCodenameError] = useState("");
   const [leaderboard, setLeaderboard] = useState<Entry[]>(loadLeaderboard);
-  const [hintDialogOpen, setHintDialogOpen] = useState(false);
 
-  const roundMeta = roundIndex === 0
-    ? { number: "01", title: "CAMPUS RECON", label: "SCHOOL PROTOCOL" }
-    : { number: "02", title: "CYBER OPERATION", label: "CLUB PROTOCOL" };
+  const roundMeta = ROUND_META[roundIndex];
+  const currentFlag = composeFlag(fragments);
+  const boardRows = buildBoardRows(round, guess);
+
+  useEffect(() => {
+    let active = true;
+    fetch("/wordlist.txt")
+      .then((response) => {
+        if (!response.ok) throw new Error("Wordlist unavailable");
+        return response.text();
+      })
+      .then((text) => {
+        if (active) {
+          setAllowedWords(new Set(text.split(/\s+/).filter(Boolean).map((word) => word.toUpperCase())));
+        }
+      })
+      .catch(() => {
+        if (active) setAllowedWords(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const startMission = () => {
     setRoundIndex(0);
-    setRound(createRound(pickPuzzle("school")));
+    setRound(createRound(pickPuzzle("general-one")));
     setGuess("");
-    setSchoolScore(0);
-    setClubScore(0);
+    setRoundScores([]);
+    setFragments([]);
     setCodename("");
     setCodenameError("");
-    setHintDialogOpen(false);
     setScreen("play");
   };
 
   const finishGuess = (next: RoundState) => {
     setRound(next);
     setGuess("");
-    if (next.status === "playing" && next.availableHints > round.availableHints) {
-      setHintDialogOpen(true);
-    }
     if (next.status === "won") {
-      if (roundIndex === 0) setSchoolScore(next.score);
-      else setClubScore(next.score);
+      setRoundScores((scores) => [...scores.slice(0, roundIndex), next.score]);
+      setFragments((values) => [...values.slice(0, roundIndex), next.puzzle.answer]);
       setScreen("round-result");
     } else if (next.status === "lost") {
-      if (roundIndex === 0) setScreen("failed");
-      else {
-        setClubScore(0);
-        setScreen("round-result");
-      }
+      setScreen("failed");
     }
   };
 
   const sendGuess = () => {
-    if (guess) {
-      const completedGuess = composeGuess(round.puzzle.answer.length, guess, round.hints).join("");
-      finishGuess(submitGuess(round, completedGuess));
+    if (!guess) return;
+    const completedGuess = buildBoardRows(round, guess)[round.rows.length]?.letters.join("") ?? "";
+    const next = submitGuess(round, completedGuess, allowedWords ?? undefined);
+    if (next.attempt === round.attempt && next.status === round.status) {
+      setRound(next);
+      return;
     }
+    finishGuess(next);
   };
 
   const pressKey = (key: string) => {
-    if (screen !== "play" || round.status !== "playing" || hintDialogOpen) return;
+    if (screen !== "play" || round.status !== "playing") return;
     if (key === "ENTER") return sendGuess();
     if (key === "BACKSPACE") return setGuess((value) => value.slice(0, -1));
-    if (/^[A-Z]$/.test(key) && guess.length < remainingInputLength(round.puzzle.answer.length, round.hints)) {
+    if (/^[A-Z]$/.test(key) && guess.length < remainingInputLength(5, round.hints)) {
       setGuess((value) => value + key);
     }
   };
@@ -120,22 +147,18 @@ export default function CyberWordle() {
     return () => window.removeEventListener("keydown", onKeyDown);
   });
 
-  const continueToClub = () => {
-    setRoundIndex(1);
-    setRound(createRound(pickPuzzle("club")));
+  const continueCampaign = () => {
+    const nextIndex = (roundIndex + 1) as RoundIndex;
+    setRoundIndex(nextIndex);
+    setRound(createRound(pickPuzzle(ROUND_CATEGORIES[nextIndex])));
     setGuess("");
-    setHintDialogOpen(false);
     setScreen("play");
   };
 
-  const acceptHint = () => {
-    setRound(purchaseHint(round));
-    setHintDialogOpen(false);
-  };
-
-  const skipHint = () => {
-    setRound(dismissHint(round));
-    setHintDialogOpen(false);
+  const retryRound = () => {
+    setRound(createRound(round.puzzle));
+    setGuess("");
+    setScreen("play");
   };
 
   const saveScore = (event: FormEvent) => {
@@ -145,15 +168,7 @@ export default function CyberWordle() {
       setCodenameError("Use 2–16 letters, numbers, _ or -.");
       return;
     }
-    const completedClub = roundIndex === 1;
-    const entry: Entry = {
-      codename: clean,
-      schoolScore,
-      clubScore: completedClub ? clubScore : 0,
-      totalScore: schoolScore + (completedClub ? clubScore : 0),
-      roundsCompleted: completedClub ? 2 : 1,
-      achievedAt: new Date().toISOString(),
-    };
+    const entry = buildCampaignEntry(clean, roundScores, new Date().toISOString()) as Entry;
     const updated = upsertScore(leaderboard, entry);
     setLeaderboard(updated);
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
@@ -171,105 +186,81 @@ export default function CyberWordle() {
       <header className="topbar">
         <button className="brand" onClick={() => setScreen("welcome")} aria-label="Return to home">
           <span className="brand-mark">CW</span>
-          <span><b>CYBER WORDLE</b><small>DECODE THE THREAT</small></span>
+          <span><b>CYBER WORDLE</b><small>ASSEMBLE THE FLAG</small></span>
         </button>
         <div className="system-status"><span /> SYSTEM ONLINE</div>
       </header>
 
       {screen === "welcome" && (
         <section className="welcome-screen screen-enter">
-          <div className="eyebrow"><span>CLUB DAY PROTOCOL</span><i>v1.0</i></div>
+          <div className="eyebrow"><span>CLUB DAY PROTOCOL</span><i>v1.2</i></div>
           <h1>THINK LIKE AN<br /><em>ANALYST.</em></h1>
-          <p className="welcome-copy">Decode two English words. Protect your Security Score. Earn your place among the top agents.</p>
+          <p className="welcome-copy">Decode three five-letter English words. Each completed round reveals one fragment of the final UCS flag.</p>
           <button className="primary-button" onClick={startMission}>BEGIN MISSION <span>→</span></button>
           <div className="mission-map">
-            <article><span>01</span><div><b>CAMPUS RECON</b><small>School protocol</small></div></article>
-            <div className="map-line" />
-            <article><span>02</span><div><b>CYBER OPERATION</b><small>Club protocol</small></div></article>
+            {ROUND_META.map((meta, index) => (
+              <div className="map-segment" key={meta.number}>
+                {index > 0 && <div className="map-line" />}
+                <article><span>{meta.number}</span><div><b>{meta.title}</b><small>{meta.label}</small></div></article>
+              </div>
+            ))}
           </div>
           <div className="rule-strip">
-            <span><b>200</b> START SCORE</span><span><b>11</b> MAX GUESSES</span><span><b>−5</b> WRONG GUESS</span><span><b>−10</b> PAID HINT</span>
+            <span><b>5</b> LETTERS</span><span><b>6</b> MAX GUESSES</span><span><b>3</b> AUTO HINT</span><span><b>3</b> FLAG FRAGMENTS</span>
           </div>
         </section>
       )}
 
       {screen === "play" && (
-        <section className="game-layout screen-enter">
-          <aside className="mission-panel">
-            <div className="round-tag">ROUND {roundMeta.number} / 02</div>
-            <p className="protocol-label">{roundMeta.label}</p>
-            <h2>{roundMeta.title}</h2>
-            <div className="mission-brief">
-              <span>▣ MISSION BRIEF</span>
-              <p>{round.puzzle.missionBrief}</p>
-              <p className="mission-brief-vi">{round.puzzle.missionBriefVi}</p>
-            </div>
-            <dl className="stat-grid">
-              <div><dt>SECURITY SCORE</dt><dd>{round.score}<small>/200</small></dd></div>
-              <div><dt>ATTEMPTS</dt><dd>{round.attempt}<small>/11</small></dd></div>
-            </dl>
-            <div className="score-meter"><i style={{ width: `${round.score / 2}%` }} /></div>
-          </aside>
-
+        <section className="game-layout screen-enter" aria-label={"Round " + (roundIndex + 1) + " of 3"}>
           <div className="board-panel">
-            <div className="word-grid" style={{ "--word-length": round.puzzle.answer.length } as React.CSSProperties}>
-              {Array.from({ length: 11 }, (_, rowIndex) => {
-                const row = round.rows[rowIndex];
-                const active = rowIndex === round.rows.length;
-                const letters = row ? [...row.guess] : active ? composeGuess(round.puzzle.answer.length, guess, round.hints) : Array(round.puzzle.answer.length).fill("");
-                return (
-                  <div className={`word-row ${active ? "active" : ""}`} key={rowIndex}>
-                    <span className="row-number">{String(rowIndex + 1).padStart(2, "0")}</span>
-                    {letters.map((letter, index) => (
-                      <div className={`letter-cell ${row?.evaluation[index] ?? ""} ${letter ? "filled" : ""} ${active && round.hints.some((hint) => hint.index === index) ? "hinted" : ""}`} key={index}>{letter.trim()}</div>
-                    ))}
-                  </div>
-                );
-              })}
+            <div className="word-grid">
+              {boardRows.map((boardRow, rowIndex) => (
+                <div className={"word-row " + (boardRow.active ? "active" : "")} key={rowIndex}>
+                  <span className="row-number">{String(rowIndex + 1).padStart(2, "0")}</span>
+                  {boardRow.letters.map((letter: string, index: number) => (
+                    <div
+                      className={"letter-cell " + (boardRow.evaluation[index] ?? "") + " " + (letter ? "filled" : "") + " " + (boardRow.active && round.hints.some((hint) => hint.index === index) ? "hinted" : "")}
+                      key={index}
+                    >
+                      {letter.trim()}
+                    </div>
+                  ))}
+                </div>
+              ))}
             </div>
+            <p className={"board-message " + (round.message === "WORD NOT IN LIST" ? "warning" : "")}>{round.message}</p>
           </div>
         </section>
       )}
 
-      {hintDialogOpen && (
-        <div className="hint-dialog-backdrop" role="dialog" aria-modal="true" aria-labelledby="hint-dialog-title">
-          <section className="hint-dialog">
-            <div className="round-tag">MILESTONE INTEL</div>
-            <p className="protocol-label">ATTEMPT {round.attempt} REACHED</p>
-            <h2 id="hint-dialog-title">USE A HINT?</h2>
-            <p>You can reveal one piece of information now. Using it will deduct 10 points from your Security Score.</p>
-            <div className="hint-dialog-actions">
-              <button className="primary-button" onClick={acceptHint}>USE HINT <span>−10</span></button>
-              <button className="secondary-button" onClick={skipHint}>SKIP HINT</button>
-            </div>
-          </section>
-        </div>
-      )}
-
       {screen === "round-result" && (
         <section className="result-screen screen-enter">
-          <div className={`access-badge ${round.status === "lost" ? "denied" : ""}`}>{round.status === "won" ? "ACCESS GRANTED" : "ACCESS DENIED"}</div>
-          <p className="protocol-label">{roundMeta.title} COMPLETE</p>
+          <div className="access-badge">FRAGMENT ACQUIRED</div>
+          <p className="protocol-label">ROUND {roundMeta.number} / 03 COMPLETE</p>
           <h2>{round.puzzle.answer}</h2>
-          <div className="intel-card"><span>SECURITY INTEL CARD</span><p>{round.puzzle.intel}</p></div>
-          <div className="result-score"><small>SECURITY SCORE</small><b>{round.score}</b><span>POINTS</span></div>
-          {roundIndex === 0 ? (
-            <div className="result-actions">
-              <button className="primary-button" onClick={continueToClub}>CONTINUE MISSION <span>→</span></button>
-              <button className="secondary-button" onClick={() => setScreen("codename")}>BANK SCORE &amp; STOP</button>
-            </div>
-          ) : <button className="primary-button" onClick={() => setScreen("codename")}>REGISTER SCORE <span>→</span></button>}
+          <div className="intel-card"><span>ROUND INTEL</span><p>{round.puzzle.intel}</p></div>
+          <div className="flag-card">
+            <small>{roundIndex === 2 ? "FINAL FLAG" : "FLAG PROGRESS // " + (roundIndex + 1) + " OF 3"}</small>
+            <code>{currentFlag}</code>
+          </div>
+          <div className="result-score"><small>ROUND SCORE</small><b>{round.score}</b><span>POINTS</span></div>
+          {roundIndex < 2 ? (
+            <button className="primary-button" onClick={continueCampaign}>CONTINUE TO ROUND {roundIndex + 2} <span>→</span></button>
+          ) : (
+            <button className="primary-button" onClick={() => setScreen("codename")}>REGISTER SCORE <span>→</span></button>
+          )}
         </section>
       )}
 
       {screen === "failed" && (
         <section className="result-screen screen-enter">
-          <div className="access-badge denied">ACCESS DENIED</div>
-          <p className="protocol-label">CAMPUS RECON FAILED</p>
+          <div className="access-badge denied">ROUND FAILED</div>
+          <p className="protocol-label">ROUND {roundMeta.number} / 03</p>
           <h2>{round.puzzle.answer}</h2>
-          <div className="intel-card"><span>MISSION REPORT</span><p>{round.puzzle.intel}</p></div>
-          <p className="failure-note">Round one failures are not registered on the Agent Leaderboard.</p>
-          <button className="primary-button" onClick={startMission}>NEW MISSION <span>↻</span></button>
+          <div className="intel-card"><span>ROUND REPORT</span><p>{round.puzzle.intel}</p></div>
+          <p className="failure-note">No flag fragment was awarded. Retry this round to continue the campaign.</p>
+          <button className="primary-button" onClick={retryRound}>RETRY ROUND <span>↻</span></button>
         </section>
       )}
 
@@ -277,12 +268,13 @@ export default function CyberWordle() {
         <section className="codename-screen screen-enter">
           <div className="round-tag">IDENTITY PROTOCOL</div>
           <h2>CLAIM YOUR<br /><em>RANK.</em></h2>
+          <div className="flag-card final"><small>CAPTURED FLAG</small><code>{currentFlag}</code></div>
           <p>Register a temporary Agent Codename. Only your best score will remain.</p>
           <form onSubmit={saveScore}>
             <label htmlFor="codename">AGENT CODENAME</label>
             <input id="codename" autoFocus maxLength={16} value={codename} onChange={(event) => setCodename(event.target.value)} placeholder="e.g. ZeroDay" />
             {codenameError && <small className="form-error">{codenameError}</small>}
-            <div className="banked-score"><span>BANKED SECURITY SCORE</span><b>{schoolScore + clubScore}</b></div>
+            <div className="banked-score"><span>BANKED SECURITY SCORE</span><b>{roundScores.reduce((total, score) => total + score, 0)}</b></div>
             <button className="primary-button" type="submit">JOIN LEADERBOARD <span>→</span></button>
           </form>
         </section>
@@ -297,8 +289,8 @@ export default function CyberWordle() {
           <div className="leaderboard-table">
             <div className="table-row table-head"><span>RANK</span><span>AGENT</span><span>ROUNDS</span><span>SECURITY SCORE</span></div>
             {rankEntries(leaderboard).slice(0, 10).map((entry: Entry, index: number) => (
-              <div className={`table-row ${index < 3 ? "podium" : ""}`} key={entry.codename.toLowerCase()}>
-                <span>#{String(index + 1).padStart(2, "0")}</span><b>{entry.codename}</b><span>{entry.roundsCompleted}/2</span><strong>{entry.totalScore}</strong>
+              <div className={"table-row " + (index < 3 ? "podium" : "")} key={entry.codename.toLowerCase()}>
+                <span>#{String(index + 1).padStart(2, "0")}</span><b>{entry.codename}</b><span>{entry.roundsCompleted}/3</span><strong>{entry.totalScore}</strong>
               </div>
             ))}
           </div>

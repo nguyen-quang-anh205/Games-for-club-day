@@ -85,7 +85,6 @@ const PUZZLES: Record<Difficulty, Puzzle> = {
 };
 
 const DIFFICULTIES = Object.keys(PUZZLES) as Difficulty[];
-const MAX_LIVES = 3;
 
 function getClues(line: number[]) {
   const clues: number[] = [];
@@ -104,6 +103,37 @@ function emptyBoard(size: number): CellState[][] {
   );
 }
 
+function isLineComplete(cells: CellState[], solution: number[]) {
+  return solution.every((value, index) => (value === 1) === (cells[index] === 1));
+}
+
+function markCompletedLines(board: CellState[][], solution: number[][]) {
+  const next = board.map((line) => [...line]);
+  const size = solution.length;
+
+  solution.forEach((line, row) => {
+    if (!isLineComplete(next[row], line)) return;
+    line.forEach((value, col) => {
+      if (value === 0 && next[row][col] === 0) next[row][col] = 2;
+    });
+  });
+
+  for (let col = 0; col < size; col += 1) {
+    const column = next.map((line) => line[col]);
+    const columnSolution = solution.map((line) => line[col]);
+    if (!isLineComplete(column, columnSolution)) continue;
+    columnSolution.forEach((value, row) => {
+      if (value === 0 && next[row][col] === 0) next[row][col] = 2;
+    });
+  }
+
+  return next;
+}
+
+function createBoard(puzzle: Puzzle) {
+  return markCompletedLines(emptyBoard(puzzle.size), puzzle.grid);
+}
+
 function formatTime(total: number) {
   const minutes = Math.floor(total / 60).toString().padStart(2, "0");
   const seconds = (total % 60).toString().padStart(2, "0");
@@ -113,21 +143,19 @@ function formatTime(total: number) {
 export default function Home() {
   const [difficulty, setDifficulty] = useState<Difficulty>("easy");
   const puzzle = PUZZLES[difficulty];
-  const [board, setBoard] = useState<CellState[][]>(() => emptyBoard(puzzle.size));
+  const [board, setBoard] = useState<CellState[][]>(() => createBoard(puzzle));
   const [tool, setTool] = useState<Tool>("fill");
   const [seconds, setSeconds] = useState(0);
   const [started, setStarted] = useState(false);
   const [won, setWon] = useState(false);
-  const [lost, setLost] = useState(false);
   const [revealPhase, setRevealPhase] = useState<RevealPhase>("idle");
-  const [lives, setLives] = useState(MAX_LIVES);
-  const [mistakeCell, setMistakeCell] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState("SYSTEM READY — 3 Integrity. Bắt đầu khôi phục dữ liệu!");
+  const [feedback, setFeedback] = useState("SYSTEM READY — Bắt đầu khôi phục dữ liệu!");
   const [bestTime, setBestTime] = useState<number | null>(null);
+  const [hoverCell, setHoverCell] = useState<{ row: number; col: number } | null>(null);
   const dragging = useRef(false);
+  const dragTool = useRef<Tool>("fill");
   const dragState = useRef<CellState>(1);
-  const livesRef = useRef(MAX_LIVES);
-  const mistakeLock = useRef(false);
+  const lastDragCell = useRef<{ row: number; col: number } | null>(null);
   const revealTimers = useRef<number[]>([]);
 
   const rowClues = useMemo(() => puzzle.grid.map(getClues), [puzzle]);
@@ -145,18 +173,36 @@ export default function Home() {
     ),
     [board, puzzle],
   );
+  const completedRows = useMemo(
+    () => puzzle.grid.map((line, row) => isLineComplete(board[row], line)),
+    [board, puzzle],
+  );
+  const completedCols = useMemo(
+    () => Array.from({ length: puzzle.size }, (_, col) => isLineComplete(
+      board.map((line) => line[col]),
+      puzzle.grid.map((line) => line[col]),
+    )),
+    [board, puzzle],
+  );
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      if (started && !won && !lost) setSeconds((value) => value + 1);
+      if (started && !won) setSeconds((value) => value + 1);
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [lost, started, won]);
+  }, [started, won]);
 
   useEffect(() => {
-    const stopDragging = () => { dragging.current = false; };
+    const stopDragging = () => {
+      dragging.current = false;
+      lastDragCell.current = null;
+    };
     window.addEventListener("pointerup", stopDragging);
-    return () => window.removeEventListener("pointerup", stopDragging);
+    window.addEventListener("pointercancel", stopDragging);
+    return () => {
+      window.removeEventListener("pointerup", stopDragging);
+      window.removeEventListener("pointercancel", stopDragging);
+    };
   }, []);
 
   useEffect(() => {
@@ -178,7 +224,7 @@ export default function Home() {
     const finish = puzzle.grid.every((row, r) =>
       row.every((solution, c) => (solution === 1) === (board[r][c] === 1)),
     );
-    if (!finish || won || lost || !started) return;
+    if (!finish || won || !started) return;
     setWon(true);
     setRevealPhase("pixels");
     setFeedback("MATRIX COMPLETE — Đang đối chiếu lưới với ảnh nguồn...");
@@ -202,7 +248,7 @@ export default function Home() {
       window.localStorage.setItem(bestKey, String(seconds));
       setBestTime(seconds);
     }
-  }, [board, difficulty, lost, puzzle, seconds, started, won]);
+  }, [board, difficulty, puzzle, seconds, started, won]);
 
   function clearReveal() {
     revealTimers.current.forEach((timer) => window.clearTimeout(timer));
@@ -213,30 +259,22 @@ export default function Home() {
   function changeDifficulty(next: Difficulty) {
     clearReveal();
     setDifficulty(next);
-    setBoard(emptyBoard(PUZZLES[next].size));
+    setBoard(createBoard(PUZZLES[next]));
     setSeconds(0);
     setStarted(false);
     setWon(false);
-    setLost(false);
-    setLives(MAX_LIVES);
-    livesRef.current = MAX_LIVES;
-    setMistakeCell(null);
-    mistakeLock.current = false;
-    setFeedback("SYSTEM READY — 3 Integrity. Bắt đầu khôi phục dữ liệu!");
+    setHoverCell(null);
+    setFeedback("SYSTEM READY — Bắt đầu khôi phục dữ liệu!");
   }
 
   function resetBoard() {
     clearReveal();
-    setBoard(emptyBoard(puzzle.size));
+    setBoard(createBoard(puzzle));
     setSeconds(0);
     setStarted(false);
     setWon(false);
-    setLost(false);
-    setLives(MAX_LIVES);
-    livesRef.current = MAX_LIVES;
-    setMistakeCell(null);
-    mistakeLock.current = false;
-    setFeedback("SESSION RESET — System Integrity đã được nạp lại.");
+    setHoverCell(null);
+    setFeedback("SESSION RESET — Bàn chơi đã được làm mới.");
   }
 
   function targetState(current: CellState, activeTool = tool): CellState {
@@ -244,53 +282,60 @@ export default function Home() {
     return current === selected ? 0 : selected;
   }
 
-  function loseLife(row: number, col: number) {
-    if (mistakeLock.current) return;
-    mistakeLock.current = true;
-    dragging.current = false;
-    const nextLives = Math.max(0, livesRef.current - 1);
-    livesRef.current = nextLives;
-    setLives(nextLives);
-    setMistakeCell(`${row}-${col}`);
-    setFeedback(nextLives > 0
-      ? `INTEGRITY ALERT — Data block sai. Còn ${nextLives} mạng.`
-      : "SYSTEM COMPROMISED — System Integrity đã về 0!"
-    );
-    if (nextLives === 0) setLost(true);
-    window.setTimeout(() => {
-      setMistakeCell(null);
-      mistakeLock.current = false;
-    }, 520);
-  }
-
   function setCell(row: number, col: number, activeTool = tool, value?: CellState) {
-    if (won || lost) return;
+    if (won) return;
     setStarted(true);
     const target = value ?? targetState(board[row][col], activeTool);
-    if (target === 1 && puzzle.grid[row][col] === 0) {
-      loseLife(row, col);
-      return;
-    }
     setBoard((current) => {
       const next = current.map((line) => [...line]);
       next[row][col] = target;
-      return next;
+      return target === 1 ? markCompletedLines(next, puzzle.grid) : next;
     });
-    if (target === 1) setFeedback("DATA BLOCK VALID — Tiếp tục khôi phục tập tin.");
+    if (target === 1) setFeedback("ĐÃ GHI NHẬN — Tiếp tục đối chiếu gợi ý hàng và cột.");
   }
 
-  function beginDrag(row: number, col: number) {
-    if (won || lost) return;
+  function beginDrag(row: number, col: number, activeTool = tool) {
+    if (won) return;
     dragging.current = true;
-    dragState.current = targetState(board[row][col]);
-    setCell(row, col, tool, dragState.current);
+    dragTool.current = activeTool;
+    dragState.current = targetState(board[row][col], activeTool);
+    lastDragCell.current = { row, col };
+    setCell(row, col, activeTool, dragState.current);
+  }
+
+  function continueDrag(row: number, col: number) {
+    if (!dragging.current) return;
+    const previous = lastDragCell.current;
+    if (!previous || (previous.row === row && previous.col === col)) return;
+
+    let x = previous.col;
+    let y = previous.row;
+    const dx = Math.abs(col - x);
+    const dy = Math.abs(row - y);
+    const stepX = x < col ? 1 : -1;
+    const stepY = y < row ? 1 : -1;
+    let error = dx - dy;
+
+    while (x !== col || y !== row) {
+      const doubled = error * 2;
+      if (doubled > -dy) { error -= dy; x += stepX; }
+      if (doubled < dx) { error += dx; y += stepY; }
+      setCell(y, x, dragTool.current, dragState.current);
+    }
+    lastDragCell.current = { row, col };
   }
 
   return (
     <main
       className="app-shell"
-      onPointerUp={() => (dragging.current = false)}
-      onPointerLeave={() => (dragging.current = false)}
+      onPointerUp={() => {
+        dragging.current = false;
+        lastDragCell.current = null;
+      }}
+      onPointerLeave={() => {
+        dragging.current = false;
+        lastDragCell.current = null;
+      }}
     >
       <header className="site-header">
         <a className="brand" href="#game" aria-label="USTH Cybersecurity Nonogram - về bàn chơi">
@@ -306,14 +351,10 @@ export default function Home() {
         </div>
       </header>
 
-      <section className="intro" aria-labelledby="page-title">
-        <div>
-          <p className="eyebrow">USTH CYBERSECURITY · DIGITAL FORENSICS LAB</p>
-          <h1 id="page-title">Khôi phục bức tranh<br /><em>đang bị khóa.</em></h1>
-        </div>
+      <section className="intro intro-compact" aria-label="Mô tả thử thách">
         <div className="intro-copy">
           <span className="copy-tag">INCIDENT BRIEF</span>
-          <p>Một tập tin hình ảnh đã bị phân mảnh. Phân tích chỉ dấu, bảo toàn System Integrity và khôi phục từng data block.</p>
+          <p>Một tập tin hình ảnh đã bị phân mảnh. Phân tích chỉ dấu và khôi phục từng data block để mở khóa ảnh nguồn.</p>
         </div>
       </section>
 
@@ -328,14 +369,6 @@ export default function Home() {
               ))}
             </div>
             <div className="mission-meters">
-              <div className={`life-meter ${mistakeCell ? "hit" : ""}`} aria-label={`Còn ${lives} mạng`}>
-                <small>SYSTEM INTEGRITY</small>
-                <div aria-hidden="true">
-                  {Array.from({ length: MAX_LIVES }, (_, index) => (
-                    <span key={index} className={index < lives ? "alive" : "lost"}>♥</span>
-                  ))}
-                </div>
-              </div>
               <div className="timer" aria-label={`Thời gian ${formatTime(seconds)}`}>
                 <span aria-hidden="true">◷</span>
                 <strong>{formatTime(seconds)}</strong>
@@ -347,30 +380,53 @@ export default function Home() {
             <span className="board-sticker sticker-a" aria-hidden="true">DIGITAL<br />FORENSICS</span>
             <span className="board-sticker sticker-b" aria-hidden="true">CASE 0x{puzzle.size}</span>
             <div className={`nonogram size-${puzzle.size}`} style={{ "--size": puzzle.size } as React.CSSProperties}>
-              <div className="corner-cell"><span>{puzzle.size}×{puzzle.size}</span></div>
+              <div className="corner-cell" aria-hidden="true" />
               <div className="column-clues">
                 {colClues.map((clues, col) => (
-                  <div className="col-clue" key={col}>{clues.map((clue, i) => <span key={i}>{clue}</span>)}</div>
+                  <div className={`col-clue ${completedCols[col] ? "complete" : ""} ${hoverCell?.col === col ? "active" : ""}`} key={col}>
+                    {clues.map((clue, i) => <span key={i}>{clue}</span>)}
+                  </div>
                 ))}
               </div>
               <div className="row-clues">
                 {rowClues.map((clues, row) => (
-                  <div className="row-clue" key={row}>{clues.map((clue, i) => <span key={i}>{clue}</span>)}</div>
+                  <div className={`row-clue ${completedRows[row] ? "complete" : ""} ${hoverCell?.row === row ? "active" : ""}`} key={row}>
+                    {clues.map((clue, i) => <span key={i}>{clue}</span>)}
+                  </div>
                 ))}
               </div>
-              <div className="grid" style={{ gridTemplateColumns: `repeat(${puzzle.size}, var(--cell))` }}>
+              <div
+                className="grid"
+                style={{ gridTemplateColumns: `repeat(${puzzle.size}, var(--cell))` }}
+                onPointerMove={(event) => {
+                  if (!dragging.current) return;
+                  const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLButtonElement>(".cell");
+                  if (!target) return;
+                  const row = Number(target.dataset.row);
+                  const col = Number(target.dataset.col);
+                  if (Number.isNaN(row) || Number.isNaN(col)) return;
+                  setHoverCell({ row, col });
+                  continueDrag(row, col);
+                }}
+                onPointerLeave={() => setHoverCell(null)}
+              >
                 {board.map((row, r) => row.map((cell, c) => (
                   <button
                     key={`${r}-${c}`}
-                    className={`cell ${cell === 1 ? "filled" : ""} ${cell === 2 ? "crossed" : ""} ${mistakeCell === `${r}-${c}` ? "mistake" : ""} ${(c + 1) % 5 === 0 && c < puzzle.size - 1 ? "group-right" : ""} ${(r + 1) % 5 === 0 && r < puzzle.size - 1 ? "group-bottom" : ""}`}
+                    data-row={r}
+                    data-col={c}
+                    className={`cell ${cell === 1 ? "filled" : ""} ${cell === 2 ? "crossed" : ""} ${hoverCell && (hoverCell.row === r || hoverCell.col === c) ? "axis-active" : ""} ${(c + 1) % 5 === 0 && c < puzzle.size - 1 ? "group-right" : ""} ${(r + 1) % 5 === 0 && r < puzzle.size - 1 ? "group-bottom" : ""}`}
                     aria-label={`Hàng ${r + 1}, cột ${c + 1}${cell === 1 ? ", đã tô" : cell === 2 ? ", đã đánh dấu X" : ""}`}
                     onPointerDown={(event) => {
-                      if (event.button !== 0) return;
+                      if (event.button !== 0 && event.button !== 2) return;
                       event.preventDefault();
-                      beginDrag(r, c);
+                      event.currentTarget.setPointerCapture(event.pointerId);
+                      beginDrag(r, c, event.button === 2 ? "cross" : tool);
                     }}
-                    onPointerEnter={() => { if (dragging.current) setCell(r, c, tool, dragState.current); }}
-                    onContextMenu={(event) => { event.preventDefault(); setCell(r, c, "cross"); }}
+                    onPointerEnter={() => {
+                      setHoverCell({ row: r, col: c });
+                    }}
+                    onContextMenu={(event) => event.preventDefault()}
                     onKeyDown={(event) => {
                       if (event.key !== "Enter" && event.key !== " ") return;
                       event.preventDefault();
@@ -403,33 +459,28 @@ export default function Home() {
 
         <aside className="side-panel">
           <div className="panel-heading">
-            <span className="panel-number">01</span>
-            <div><p>INCIDENT BRIEF</p><h2>Khôi phục tập tin</h2></div>
+            <span className="panel-number" aria-hidden="true">01</span>
+            <h2>Cách chơi</h2>
           </div>
-          <p>Lưới đang chơi là bản nhị phân hóa của chính file ảnh nguồn. Hoàn thành ma trận để phục hồi ảnh từ đen trắng sang màu.</p>
-          <div className="rule-stack">
-            <div className="rule-card danger">
-              <span className="rule-symbol">■</span>
-              <p><b>Invalid data block</b>System Integrity −1</p>
+          <div className="tutorial-body">
+            <p className="tutorial-intro">Điền các ô theo số lượng cần thiết:</p>
+            <div className="tutorial-actions">
+              <p>
+                <span className="tutorial-action-icon fill" aria-hidden="true"><i /></span>
+                <span><b>Chuột trái</b>Để tô màu.</span>
+              </p>
+              <p>
+                <span className="tutorial-action-icon cross" aria-hidden="true">×</span>
+                <span><b>Chuột phải</b>Để đánh dấu X.</span>
+              </p>
             </div>
-            <div className="rule-card safe">
-              <span className="rule-symbol">×</span>
-              <p><b>Mark safe bằng X</b>Không giảm Integrity</p>
-            </div>
-          </div>
-          <div className="clue-guide" aria-label="Cách đọc gợi ý Nonogram">
-            <div className="clue-note single-clue">
-              <span>1</span>
-              <p><b>Một ô duy nhất</b>Mỗi số 1 là một nhóm có đúng 1 ô tô đen. Nếu có nhiều số 1, các nhóm phải cách nhau ít nhất 1 ô.</p>
-            </div>
-            <div className="clue-note">
-              <span>3 · 1</span>
-              <p><b>Nhiều nhóm</b>3 ô liền nhau, cách ra ít nhất 1 ô, rồi thêm 1 ô.</p>
+            <div className="tutorial-clues">
+              <p className="single"><code>[3]</code><span>Là điền 3 ô màu liên tiếp.</span></p>
+              <p><code>[3 · 1]</code><span>Có ít nhất một ô X ngăn cách giữa 3 ô màu và 1 ô màu.</span></p>
             </div>
           </div>
           <dl className="game-stats">
             <div><dt>Access level</dt><dd>{puzzle.codename}</dd></div>
-            <div><dt>System Integrity</dt><dd>{lives}/{MAX_LIVES}</dd></div>
             <div><dt>Data blocks</dt><dd>{totalFilled}</dd></div>
             <div><dt>Best session</dt><dd>{bestTime === null ? "—" : formatTime(bestTime)}</dd></div>
           </dl>
@@ -440,17 +491,6 @@ export default function Home() {
         <span>NONOGRAM CYBER LAB · CLUB DAY EDITION</span>
         <a href="https://web.facebook.com/profile.php?id=61593161492676" target="_blank" rel="noreferrer">A CHALLENGE BY USTH CYBERSECURITY ↗</a>
       </footer>
-
-      {lost && (
-        <div className="victory-backdrop" role="dialog" aria-modal="true" aria-labelledby="result-title">
-          <div className="victory-card defeat">
-            <div className="victory-art" aria-hidden="true">×</div>
-            <p className="eyebrow">SYSTEM COMPROMISED</p>
-            <h2 id="result-title">Bạn quá gà</h2>
-            <button className="button-primary" onClick={resetBoard}>Chơi lại <span>↻</span></button>
-          </div>
-        </div>
-      )}
 
       {won && (
         <div className="victory-backdrop reveal-backdrop" role="dialog" aria-modal="true" aria-labelledby="reveal-title">
@@ -489,7 +529,6 @@ export default function Home() {
               <p className="reveal-caption">{puzzle.revealCaption}</p>
               <dl className="result-stats">
                 <div><dt>Session time</dt><dd>{formatTime(seconds)}</dd></div>
-                <div><dt>Integrity</dt><dd>{lives}/{MAX_LIVES}</dd></div>
                 <div><dt>Access level</dt><dd>{puzzle.codename}</dd></div>
               </dl>
               <code className="ctf-flag">USTHCS&#123;pixel_grid_recovered&#125;</code>

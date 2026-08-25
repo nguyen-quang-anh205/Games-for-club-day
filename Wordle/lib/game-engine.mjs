@@ -1,5 +1,7 @@
 const STARTING_SCORE = 200;
-const MAX_ATTEMPTS = 11;
+const WORD_LENGTH = 5;
+const MAX_ATTEMPTS = 6;
+const HINT_TRIGGER_ATTEMPT = 3;
 
 const normalizeWord = (word) => word.trim().toUpperCase();
 
@@ -36,19 +38,20 @@ export function createRound(puzzle) {
     attempt: 0,
     rows: [],
     hints: [],
-    availableHints: 0,
     status: "playing",
-    message: "SYSTEM READY — ENTER YOUR FIRST GUESS",
+    message: "",
   };
 }
 
-export function submitGuess(state, guessInput) {
+export function submitGuess(state, guessInput, allowedWords) {
   if (state.status !== "playing") return state;
 
   const guess = normalizeWord(guessInput);
-  const length = state.puzzle.answer.length;
-  if (!new RegExp(`^[A-Z]{${length}}$`).test(guess)) {
-    return { ...state, message: `ENTER A ${length}-LETTER WORD` };
+  if (!new RegExp(`^[A-Z]{${WORD_LENGTH}}$`).test(guess)) {
+    return { ...state, message: `ENTER A ${WORD_LENGTH}-LETTER WORD` };
+  }
+  if (allowedWords && !allowedWords.has(guess)) {
+    return { ...state, message: "WORD NOT IN LIST" };
   }
 
   const evaluation = evaluateGuess(state.puzzle.answer, guess);
@@ -66,19 +69,33 @@ export function submitGuess(state, guessInput) {
   }
 
   const failed = nextAttempt >= MAX_ATTEMPTS;
-  const unlocked = nextAttempt === 5 || nextAttempt === 10 ? 1 : 0;
-  return {
+  const unlockHint = !failed && nextAttempt === HINT_TRIGGER_ATTEMPT;
+  const nextState = {
     ...state,
     score: failed ? 0 : Math.max(0, state.score - 5),
     attempt: nextAttempt,
     rows,
-    availableHints: state.availableHints + unlocked,
     status: failed ? "lost" : "playing",
-    message: failed
-      ? "ACCESS DENIED"
-      : unlocked
-        ? "NEW SCAN CREDIT AVAILABLE"
-        : "SIGNATURE MISMATCH — TRY AGAIN",
+    message: failed ? "ACCESS DENIED" : "SIGNATURE MISMATCH — TRY AGAIN",
+  };
+  if (!unlockHint) return nextState;
+
+  const known = knownPositions(nextState);
+  const answer = state.puzzle.answer;
+  const index = [...answer].findIndex((_, position) => !known.has(position));
+  if (index < 0) return nextState;
+
+  const hint = {
+    kind: "position",
+    index,
+    value: answer[index],
+    text: `HINT: Character ${index + 1} is ${answer[index]}.`,
+  };
+  return {
+    ...nextState,
+    score: Math.max(0, nextState.score - 10),
+    hints: [...state.hints, hint],
+    message: `HINT APPLIED TO ATTEMPT ${nextAttempt + 1}`,
   };
 }
 
@@ -94,43 +111,11 @@ const knownPositions = (state) => {
   return known;
 };
 
-export function purchaseHint(state) {
-  if (state.status !== "playing" || state.availableHints < 1) return state;
-
-  const answer = state.puzzle.answer;
-  const known = knownPositions(state);
-  const index = [...answer].findIndex((_, position) => !known.has(position));
-  if (index < 0) {
-    return { ...state, message: "ALL POSITIONS ALREADY TRACED" };
-  }
-
-  const hint = {
-    kind: "position",
-    index,
-    value: answer[index],
-    text: `HINT: Character ${index + 1} is ${answer[index]}.`,
-  };
-  return {
-    ...state,
-    score: Math.max(0, state.score - 10),
-    availableHints: state.availableHints - 1,
-    hints: [...state.hints, hint],
-    message: `HINT APPLIED TO ATTEMPT ${state.attempt + 1}`,
-  };
-}
-
-export function dismissHint(state) {
-  if (state.availableHints < 1) return state;
-  return {
-    ...state,
-    availableHints: state.availableHints - 1,
-    message: "HINT SKIPPED — CONTINUE THE MISSION",
-  };
-}
-
 export const GAME_RULES = {
   startingScore: STARTING_SCORE,
+  wordLength: WORD_LENGTH,
   maxAttempts: MAX_ATTEMPTS,
   wrongGuessCost: 5,
   hintCost: 10,
+  hintAttempt: HINT_TRIGGER_ATTEMPT,
 };

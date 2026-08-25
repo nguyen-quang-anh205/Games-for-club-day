@@ -1,19 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  createRound,
-  dismissHint,
-  evaluateGuess,
-  purchaseHint,
-  submitGuess,
-} from "../lib/game-engine.mjs";
+import { createRound, evaluateGuess, submitGuess } from "../lib/game-engine.mjs";
 
 const puzzle = {
-  answer: "CIPHER",
-  missionBrief: "Transforms readable data.",
-  intel: "A cipher is an algorithm used to encrypt or decrypt data.",
+  answer: "APPLE",
+  intel: "A common five-letter English word.",
+  category: "general-one",
 };
+
+test("a new round starts without a status message", () => {
+  assert.equal(createRound(puzzle).message, "");
+});
 
 test("evaluateGuess handles duplicate letters without over-crediting", () => {
   assert.deepEqual(evaluateGuess("APPLE", "ALLEY"), [
@@ -26,7 +24,7 @@ test("evaluateGuess handles duplicate letters without over-crediting", () => {
 });
 
 test("an incorrect guess costs five points", () => {
-  const state = submitGuess(createRound(puzzle), "HACKER");
+  const state = submitGuess(createRound(puzzle), "BRICK");
 
   assert.equal(state.score, 195);
   assert.equal(state.attempt, 1);
@@ -34,87 +32,66 @@ test("an incorrect guess costs five points", () => {
 });
 
 test("a correct guess grants access without a wrong-guess penalty", () => {
-  const state = submitGuess(createRound(puzzle), "CIPHER");
+  const state = submitGuess(createRound(puzzle), "APPLE");
 
   assert.equal(state.score, 200);
   assert.equal(state.status, "won");
 });
 
-test("an invalid-length guess does not consume an attempt", () => {
+test("a guess that is not five letters does not consume an attempt", () => {
   const state = submitGuess(createRound(puzzle), "CAT");
 
   assert.equal(state.attempt, 0);
   assert.equal(state.score, 200);
-  assert.equal(state.message, "ENTER A 6-LETTER WORD");
+  assert.equal(state.message, "ENTER A 5-LETTER WORD");
 });
 
-test("paid hints unlock only after wrong guesses five and ten", () => {
-  let state = createRound(puzzle);
-  for (let index = 0; index < 4; index += 1) {
-    state = submitGuess(state, "HACKER");
-  }
-  assert.equal(state.availableHints, 0);
+test("a word outside the allowed Wordle list does not consume an attempt", () => {
+  const allowedWords = new Set(["APPLE", "BRICK"]);
+  const state = submitGuess(createRound(puzzle), "ZZZZZ", allowedWords);
 
-  state = submitGuess(state, "HACKER");
-  assert.equal(state.availableHints, 1);
-  state = purchaseHint(state);
-  assert.equal(state.availableHints, 0);
-  assert.equal(state.score, 165);
-
-  for (let index = 0; index < 5; index += 1) {
-    state = submitGuess(state, "HACKER");
-  }
-  assert.equal(state.availableHints, 1);
+  assert.equal(state.attempt, 0);
+  assert.equal(state.score, 200);
+  assert.equal(state.message, "WORD NOT IN LIST");
 });
 
-test("declining a milestone hint consumes its credit without a score penalty", () => {
+test("the third wrong guess automatically adds one exact-position hint", () => {
   let state = createRound(puzzle);
-  for (let index = 0; index < 5; index += 1) {
-    state = submitGuess(state, "HACKER");
-  }
+  state = submitGuess(state, "BRICK");
+  state = submitGuess(state, "BRICK");
 
-  state = dismissHint(state);
+  assert.deepEqual(state.hints, []);
 
-  assert.equal(state.availableHints, 0);
+  state = submitGuess(state, "BRICK");
+
+  assert.equal(state.attempt, 3);
   assert.equal(state.score, 175);
+  assert.deepEqual(state.hints, [{
+    kind: "position",
+    index: 0,
+    value: "A",
+    text: "HINT: Character 1 is A.",
+  }]);
+  assert.equal(state.message, "HINT APPLIED TO ATTEMPT 4");
 });
 
-test("a hint always reveals one exact position even when letters remain undiscovered", () => {
-  let state = createRound({ ...puzzle, answer: "APPLE" });
-  state = submitGuess(state, "PLANE");
-  for (let index = 1; index < 5; index += 1) {
-    state = submitGuess(state, "BRICK");
-  }
-
-  state = purchaseHint(state);
-
-  assert.equal(state.hints[0].kind, "position");
-  assert.equal(state.hints[0].index, 0);
-  assert.equal(state.hints[0].value, "A");
-  assert.equal(state.hints[0].text, "HINT: Character 1 is A.");
-});
-
-test("a position hint appears after every answer letter was discovered", () => {
+test("the automatic hint chooses a position not already solved", () => {
   let state = createRound({ ...puzzle, answer: "TRACE" });
-  state = submitGuess(state, "REACT");
-  for (let index = 1; index < 5; index += 1) {
-    state = submitGuess(state, "REACT");
-  }
+  state = submitGuess(state, "TRICK");
+  state = submitGuess(state, "TRICK");
+  state = submitGuess(state, "TRICK");
 
-  state = purchaseHint(state);
-
-  assert.equal(state.hints[0].kind, "position");
-  assert.equal(state.hints[0].index, 0);
-  assert.equal(state.hints[0].value, "T");
+  assert.equal(state.hints[0].index, 2);
+  assert.equal(state.hints[0].value, "A");
 });
 
-test("incorrect guess eleven fails the round and sets score to zero", () => {
+test("the sixth incorrect guess fails the round", () => {
   let state = createRound(puzzle);
-  for (let index = 0; index < 11; index += 1) {
-    state = submitGuess(state, "HACKER");
+  for (let index = 0; index < 6; index += 1) {
+    state = submitGuess(state, "BRICK");
   }
 
   assert.equal(state.status, "lost");
   assert.equal(state.score, 0);
-  assert.equal(state.attempt, 11);
+  assert.equal(state.attempt, 6);
 });

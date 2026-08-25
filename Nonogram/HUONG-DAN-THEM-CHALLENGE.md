@@ -105,7 +105,8 @@ docker compose up --build
 Mở game, chọn challenge mới và xác nhận:
 
 - Gợi ý hàng/cột khớp với ma trận.
-- Tô sai ô bị trừ một mạng; đánh dấu X không bị trừ mạng.
+- Người chơi có thể sửa các ô tô hoặc dấu X cho đến khi lưới khớp đáp án.
+- Khi một hàng hoặc cột đã đủ ô đen, các ô trống còn lại tự chuyển thành X.
 - Hoàn thành lưới sẽ chạy hiệu ứng đen trắng → ảnh màu → kết quả và chú thích.
 
 ## Lưu ý thiết kế

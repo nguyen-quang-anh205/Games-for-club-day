@@ -13,14 +13,14 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: "USTH Cybersecurity · Nonogram Việt",
-    description: "Digital Forensics Lab — khôi phục dữ liệu, bảo toàn System Integrity.",
+    description: "Digital Forensics Lab — giải Nonogram và khôi phục dữ liệu hình ảnh.",
     type: "website",
     images: [{ url: "/og.png", width: 1200, height: 630, alt: "Nonogram Việt" }],
   },
   twitter: {
     card: "summary_large_image",
     title: "USTH Cybersecurity · Nonogram Việt",
-    description: "Digital Forensics Lab — khôi phục dữ liệu, bảo toàn System Integrity.",
+    description: "Digital Forensics Lab — giải Nonogram và khôi phục dữ liệu hình ảnh.",
     images: ["/og.png"],
   },
   icons: {

@@ -1,61 +1,39 @@
+export type PuzzleCategory = "general-one" | "general-two" | "usth";
+
 export type Puzzle = {
   answer: string;
-  missionBrief: string;
-  missionBriefVi: string;
   intel: string;
-  category: "school" | "club";
+  category: PuzzleCategory;
 };
 
-export const puzzles: Record<"school" | "club", Puzzle[]> = {
-  school: [
-    {
-      answer: "CLASS",
-      category: "school",
-      missionBrief: "A place where students gather to learn together.",
-      missionBriefVi: "Nơi sinh viên cùng nhau học tập.",
-      intel: "A class is both a group of learners and the session where learning happens.",
-    },
-    {
-      answer: "CAMPUS",
-      category: "school",
-      missionBrief: "The grounds and buildings that make up a university.",
-      missionBriefVi: "Khuôn viên và các tòa nhà tạo nên một trường đại học.",
-      intel: "A campus connects classrooms, labs, libraries, clubs, and student life.",
-    },
-    {
-      answer: "MENTOR",
-      category: "school",
-      missionBrief: "A trusted person who guides your learning journey.",
-      missionBriefVi: "Một người đáng tin cậy hướng dẫn hành trình học tập của bạn.",
-      intel: "A mentor shares experience, gives feedback, and helps others grow.",
-    },
+export const puzzles: Record<PuzzleCategory, Puzzle[]> = {
+  "general-one": [
+    { answer: "APPLE", category: "general-one", intel: "A familiar fruit and a friendly opening word." },
+    { answer: "WATER", category: "general-one", intel: "The substance that supports every known form of life." },
+    { answer: "HOUSE", category: "general-one", intel: "A building made to be lived in." },
+    { answer: "DREAM", category: "general-one", intel: "A sequence of images and ideas experienced during sleep." },
+    { answer: "LIGHT", category: "general-one", intel: "Visible energy that lets people see." },
   ],
-  club: [
-    {
-      answer: "CIPHER",
-      category: "club",
-      missionBrief: "A method used to transform readable information.",
-      missionBriefVi: "Một phương pháp dùng để biến đổi thông tin có thể đọc được.",
-      intel: "A cipher is an algorithm used to encrypt or decrypt data.",
-    },
-    {
-      answer: "PACKET",
-      category: "club",
-      missionBrief: "A small unit of data travelling across a network.",
-      missionBriefVi: "Một đơn vị dữ liệu nhỏ di chuyển qua mạng.",
-      intel: "Packets carry headers and payloads so data can move reliably across networks.",
-    },
-    {
-      answer: "EXPLOIT",
-      category: "club",
-      missionBrief: "Code or technique that takes advantage of a weakness.",
-      missionBriefVi: "Đoạn mã hoặc kỹ thuật lợi dụng một điểm yếu.",
-      intel: "An exploit demonstrates how a vulnerability can affect a system and helps defenders validate fixes.",
-    },
+  "general-two": [
+    { answer: "BRICK", category: "general-two", intel: "A rectangular block used for building." },
+    { answer: "MUSIC", category: "general-two", intel: "Organized sound shaped through rhythm and melody." },
+    { answer: "TRACE", category: "general-two", intel: "A small sign left behind by an event or action." },
+    { answer: "LASER", category: "general-two", intel: "A focused beam used in science, medicine, and communication." },
+    { answer: "SOLAR", category: "general-two", intel: "Something related to energy from the Sun." },
+  ],
+  usth: [
+    { answer: "ROBOT", category: "usth", intel: "Robotics combines software, electronics, and engineering." },
+    { answer: "SPACE", category: "usth", intel: "Space science is one of the research directions explored at USTH." },
+    { answer: "SOLAR", category: "usth", intel: "Solar energy connects physics, materials, and sustainable technology." },
+    { answer: "CELLS", category: "usth", intel: "Cells are the fundamental units studied in life science." },
+    { answer: "GENES", category: "usth", intel: "Genes carry biological information and are central to biotechnology." },
+    { answer: "OCEAN", category: "usth", intel: "Ocean study connects climate, Earth observation, and environmental science." },
+    { answer: "EARTH", category: "usth", intel: "Earth science uses data to understand our changing planet." },
+    { answer: "LASER", category: "usth", intel: "Laser technology is used across physics, chemistry, and engineering laboratories." },
   ],
 };
 
-export function pickPuzzle(category: "school" | "club") {
+export function pickPuzzle(category: PuzzleCategory, random: () => number = Math.random) {
   const options = puzzles[category];
-  return options[Math.floor(Math.random() * options.length)];
+  return options[Math.floor(random() * options.length)];
 }
